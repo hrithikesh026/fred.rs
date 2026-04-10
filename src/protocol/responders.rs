@@ -46,15 +46,15 @@ pub enum ResponseKind {
   /// cluster connections.
   Buffer {
     /// A shared buffer for response frames.
-    frames:      Arc<Mutex<Vec<Resp3Frame>>>,
+    frames: Arc<Mutex<Vec<Resp3Frame>>>,
     /// The expected number of response frames.
-    expected:    usize,
+    expected: usize,
     /// The number of response frames received.
-    received:    Arc<AtomicUsize>,
+    received: Arc<AtomicUsize>,
     /// A shared oneshot channel to the caller.
-    tx:          Arc<Mutex<Option<ResponseSender>>>,
+    tx: Arc<Mutex<Option<ResponseSender>>>,
     /// A local field for tracking the expected index of the response in the `frames` array.
-    index:       usize,
+    index: usize,
     /// Whether errors should be returned early to the caller.
     error_early: bool,
   },
@@ -66,13 +66,17 @@ pub enum ResponseKind {
 
 impl fmt::Debug for ResponseKind {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", match self {
-      ResponseKind::Skip => "Skip",
-      ResponseKind::Buffer { .. } => "Buffer",
-      ResponseKind::Respond(_) => "Respond",
-      ResponseKind::KeyScan(_) => "KeyScan",
-      ResponseKind::ValueScan(_) => "ValueScan",
-    })
+    write!(
+      f,
+      "{}",
+      match self {
+        ResponseKind::Skip => "Skip",
+        ResponseKind::Buffer { .. } => "Buffer",
+        ResponseKind::Respond(_) => "Respond",
+        ResponseKind::KeyScan(_) => "KeyScan",
+        ResponseKind::ValueScan(_) => "ValueScan",
+      }
+    )
   }
 }
 
@@ -93,11 +97,11 @@ impl ResponseKind {
         expected,
         error_early,
       } => ResponseKind::Buffer {
-        frames:      frames.clone(),
-        tx:          tx.clone(),
-        received:    received.clone(),
-        index:       *index,
-        expected:    *expected,
+        frames: frames.clone(),
+        tx: tx.clone(),
+        received: received.clone(),
+        index: *index,
+        expected: *expected,
         error_early: *error_early,
       },
       ResponseKind::KeyScan(_) | ResponseKind::ValueScan(_) => return None,
@@ -121,11 +125,11 @@ impl ResponseKind {
 
   pub fn new_buffer(tx: ResponseSender) -> Self {
     ResponseKind::Buffer {
-      frames:      Arc::new(Mutex::new(vec![])),
-      tx:          Arc::new(Mutex::new(Some(tx))),
-      received:    Arc::new(AtomicUsize::new(0)),
-      index:       0,
-      expected:    0,
+      frames: Arc::new(Mutex::new(vec![])),
+      tx: Arc::new(Mutex::new(Some(tx))),
+      received: Arc::new(AtomicUsize::new(0)),
+      index: 0,
+      expected: 0,
       error_early: true,
     }
   }
@@ -266,7 +270,7 @@ fn merge_multiple_frames(frames: &mut Vec<Resp3Frame>, error_early: bool) -> Res
   }
 
   Resp3Frame::Array {
-    data:       mem::take(frames),
+    data: mem::take(frames),
     attributes: None,
   }
 }
@@ -427,7 +431,7 @@ fn send_value_scan_result(
 }
 
 /// Respond to the caller with the default response policy.
-pub fn respond_to_caller(
+pub async fn respond_to_caller(
   inner: &Arc<RedisClientInner>,
   server: &Server,
   mut command: RedisCommand,
@@ -447,13 +451,13 @@ pub fn respond_to_caller(
   }
 
   let _ = tx.send(Ok(frame));
-  command.respond_to_router(inner, RouterResponse::Continue);
+  command.respond_to_router(inner, RouterResponse::Continue).await;
   Ok(())
 }
 
 /// Respond to the caller, assuming multiple response frames from the last command, storing intermediate responses in
 /// the shared buffer.
-pub fn respond_buffer(
+pub async fn respond_buffer(
   inner: &Arc<RedisClientInner>,
   server: &Server,
   command: RedisCommand,
@@ -478,7 +482,7 @@ pub fn respond_buffer(
   // errors are buffered like normal frames and are not returned early
   if let Err(e) = add_buffered_frame(server, &frames, index, frame) {
     respond_locked(inner, &tx, Err(e));
-    command.respond_to_router(inner, RouterResponse::Continue);
+    command.respond_to_router(inner, RouterResponse::Continue).await;
     _error!(
       inner,
       "Exiting early after unexpected buffer response index from {} with command {}, ID {}",
@@ -518,7 +522,7 @@ pub fn respond_buffer(
     } else {
       respond_locked(inner, &tx, Ok(frame));
     }
-    command.respond_to_router(inner, RouterResponse::Continue);
+    command.respond_to_router(inner, RouterResponse::Continue).await;
   } else {
     // more responses are expected
     _trace!(
@@ -534,7 +538,7 @@ pub fn respond_buffer(
 }
 
 /// Respond to the caller of a key scanning operation.
-pub fn respond_key_scan(
+pub async fn respond_key_scan(
   inner: &Arc<RedisClientInner>,
   server: &Server,
   command: RedisCommand,
@@ -551,14 +555,14 @@ pub fn respond_key_scan(
     Ok(result) => result,
     Err(e) => {
       scanner.send_error(e);
-      command.respond_to_router(inner, RouterResponse::Continue);
+      command.respond_to_router(inner, RouterResponse::Continue).await;
       return Ok(());
     },
   };
   let scan_stream = scanner.tx.clone();
   let can_continue = next_cursor != LAST_CURSOR;
   scanner.update_cursor(next_cursor);
-  command.respond_to_router(inner, RouterResponse::Continue);
+  command.respond_to_router(inner, RouterResponse::Continue).await;
 
   let scan_result = ScanResult {
     scan_state: scanner,
@@ -574,7 +578,7 @@ pub fn respond_key_scan(
 }
 
 /// Respond to the caller of a value scanning operation.
-pub fn respond_value_scan(
+pub async fn respond_value_scan(
   inner: &Arc<RedisClientInner>,
   server: &Server,
   command: RedisCommand,
@@ -592,14 +596,14 @@ pub fn respond_value_scan(
     Ok(result) => result,
     Err(e) => {
       scanner.send_error(e);
-      command.respond_to_router(inner, RouterResponse::Continue);
+      command.respond_to_router(inner, RouterResponse::Continue).await;
       return Ok(());
     },
   };
   let scan_stream = scanner.tx.clone();
   let can_continue = next_cursor != LAST_CURSOR;
   scanner.update_cursor(next_cursor);
-  command.respond_to_router(inner, RouterResponse::Continue);
+  command.respond_to_router(inner, RouterResponse::Continue).await;
 
   _trace!(inner, "Sending value scan result with {} values", values.len());
   if let Err(e) = send_value_scan_result(inner, scanner, &command, values, can_continue) {

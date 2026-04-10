@@ -76,7 +76,7 @@ fn set_command_trace(_inner: &Arc<RedisClientInner>, _: &mut RedisCommand) {}
 /// Prepare the command, updating flags in place.
 ///
 /// Returns the RESP frame and whether the socket should be flushed.
-pub fn prepare_command(
+pub async fn prepare_command(
   inner: &Arc<RedisClientInner>,
   counters: &Counters,
   command: &mut RedisCommand,
@@ -94,7 +94,7 @@ pub fn prepare_command(
   let should_flush = counters.should_send(inner)
     || command.kind.should_flush()
     || command.is_all_cluster_nodes()
-    || command.has_router_channel();
+    || command.has_router_channel().await;
 
   command.network_start = Some(Instant::now());
   set_command_trace(inner, command);
@@ -133,18 +133,18 @@ pub async fn write_command(
     },
     Err(e) => {
       // return manual backpressure errors directly to the caller
-      command.finish(inner, Err(e));
+      command.finish(inner, Err(e)).await;
       return Written::Ignore;
     },
     _ => {},
   };
 
-  let (frame, should_flush) = match prepare_command(inner, &writer.counters, &mut command) {
+  let (frame, should_flush) = match prepare_command(inner, &writer.counters, &mut command).await {
     Ok((frame, should_flush)) => (frame, should_flush || force_flush),
     Err(e) => {
       _warn!(inner, "Frame encoding error for {}", command.kind.to_str_debug());
       // do not retry commands that trigger frame encoding errors
-      command.finish(inner, Err(e));
+      command.finish(inner, Err(e)).await;
       return Written::Ignore;
     },
   };
@@ -165,7 +165,7 @@ pub async fn write_command(
   }
 
   let no_incr = command.has_no_responses();
-  writer.push_command(inner, command);
+  writer.push_command(inner, command).await;
   if let Err(err) = writer.write_frame(frame, should_flush, no_incr).await {
     Written::Disconnected((Some(writer.server.clone()), None, err))
   } else {
@@ -175,13 +175,13 @@ pub async fn write_command(
 
 /// Check the shared connection command buffer to see if the oldest command blocks the router task on a
 /// response (not pipelined).
-pub fn check_blocked_router(inner: &Arc<RedisClientInner>, buffer: &SharedBuffer, error: &Option<RedisError>) {
+pub async fn check_blocked_router(inner: &Arc<RedisClientInner>, buffer: &SharedBuffer, error: &Option<RedisError>) {
   let command = match buffer.pop() {
     Some(cmd) => cmd,
     None => return,
   };
-  if command.has_router_channel() {
-    let tx = match command.take_router_tx() {
+  if command.has_router_channel().await {
+    let tx = match command.take_router_tx().await {
       Some(tx) => tx,
       None => return,
     };
@@ -201,29 +201,28 @@ pub fn check_blocked_router(inner: &Arc<RedisClientInner>, buffer: &SharedBuffer
 
 /// Filter the shared buffer, removing commands that reached the max number of attempts and responding to each caller
 /// with the underlying error.
-pub fn check_final_write_attempt(inner: &Arc<RedisClientInner>, buffer: &SharedBuffer, error: &Option<RedisError>) {
-  buffer
-    .drain()
-    .into_iter()
-    .filter_map(|command| {
-      if command.should_finish_with_error(inner) {
-        command.finish(
+pub async fn check_final_write_attempt(
+  inner: &Arc<RedisClientInner>,
+  buffer: &SharedBuffer,
+  error: &Option<RedisError>,
+) {
+  let commands: Vec<_> = buffer.drain().collect();
+  for command in commands {
+    if command.should_finish_with_error(inner) {
+      command
+        .finish(
           inner,
           Err(
             error
               .clone()
               .unwrap_or(RedisError::new(RedisErrorKind::IO, "Connection Closed")),
           ),
-        );
-
-        None
-      } else {
-        Some(command)
-      }
-    })
-    .for_each(|command| {
+        )
+        .await;
+    } else {
       buffer.push(command);
-    });
+    }
+  }
 }
 
 /// Read the next reconnection delay for the client.
@@ -497,11 +496,11 @@ pub fn defer_reconnect(inner: &Arc<RedisClientInner>) {
     }
   } else {
     let cmd = RouterCommand::Reconnect {
-      server:                               None,
-      tx:                                   None,
-      force:                                false,
+      server: None,
+      tx: None,
+      force: false,
       #[cfg(feature = "replicas")]
-      replica:                              false,
+      replica: false,
     };
     if let Err(_) = interfaces::send_to_router(inner, cmd) {
       _warn!(inner, "Failed to send deferred cluster sync.")

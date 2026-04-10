@@ -144,7 +144,7 @@ fn broadcast_resp3_invalidation(inner: &Arc<RedisClientInner>, server: &Server, 
     // [BlobString { data: b"foo", attributes: None }], attributes: None }], attributes: None }
     if let Resp3Frame::Array { data, .. } = data[1].take() {
       inner.notifications.broadcast_invalidation(Invalidation {
-        keys:   data
+        keys: data
           .into_iter()
           .filter_map(|f| f.as_bytes().map(|b| b.into()))
           .collect(),

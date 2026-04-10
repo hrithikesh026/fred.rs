@@ -95,7 +95,7 @@ async fn send_exec(
   command.can_pipeline = false;
   command.skip_backpressure = true;
   command.transaction_id = Some(id);
-  let rx = command.create_router_channel();
+  let rx = command.create_router_channel().await;
 
   write_command(inner, router, server, command, true, rx).await
 }
@@ -111,7 +111,7 @@ async fn send_discard(
   command.can_pipeline = false;
   command.skip_backpressure = true;
   command.transaction_id = Some(id);
-  let rx = command.create_router_channel();
+  let rx = command.create_router_channel().await;
 
   write_command(inner, router, server, command, true, rx).await
 }
@@ -179,7 +179,7 @@ pub async fn run(
     // send the WATCH command before any of the trx commands
     if let Some(watch) = watched.as_ref() {
       let watch = watch.duplicate(ResponseKind::Skip);
-      let rx = watch.create_router_channel();
+      let rx = watch.create_router_channel().await;
 
       _debug!(
         inner,
@@ -239,7 +239,7 @@ pub async fn run(
     // send each of the commands. the first one is always MULTI
     'inner: while idx < commands.len() {
       let command = commands[idx].duplicate(ResponseKind::Skip);
-      let rx = command.create_router_channel();
+      let rx = command.create_router_channel().await;
 
       match write_command(inner, router, &server, command, abort_on_error, rx).await {
         Ok(TransactionResponse::Continue) => {

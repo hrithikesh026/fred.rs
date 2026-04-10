@@ -280,8 +280,8 @@ pub fn spawn_reader_task(
     }
 
     // see the centralized variant of this function for more information.
-    utils::check_blocked_router(&inner, &buffer, &last_error);
-    utils::check_final_write_attempt(&inner, &buffer, &last_error);
+    utils::check_blocked_router(&inner, &buffer, &last_error).await;
+    utils::check_final_write_attempt(&inner, &buffer, &last_error).await;
     if is_replica {
       responses::broadcast_replica_error(&inner, &server, last_error);
     } else {
@@ -296,7 +296,7 @@ pub fn spawn_reader_task(
 /// Send a MOVED or ASK command to the router, using the router channel if possible and falling back on the
 /// command queue if appropriate.
 // Cluster errors within a transaction can only be handled via the blocking router channel.
-fn process_cluster_error(
+async fn process_cluster_error(
   inner: &Arc<RedisClientInner>,
   server: &Server,
   mut command: RedisCommand,
@@ -309,13 +309,13 @@ fn process_cluster_error(
     Some(data) => match protocol_utils::parse_cluster_error(data) {
       Ok(result) => result,
       Err(e) => {
-        command.respond_to_router(inner, RouterResponse::Continue);
+        command.respond_to_router(inner, RouterResponse::Continue).await;
         command.respond_to_caller(Err(e));
         return;
       },
     },
     None => {
-      command.respond_to_router(inner, RouterResponse::Continue);
+      command.respond_to_router(inner, RouterResponse::Continue).await;
       command.respond_to_caller(Err(RedisError::new(RedisErrorKind::Protocol, "Invalid cluster error.")));
       return;
     },
@@ -324,7 +324,7 @@ fn process_cluster_error(
     Some(server) => server,
     None => {
       _warn!(inner, "Invalid server field in cluster error: {}", server_str);
-      command.respond_to_router(inner, RouterResponse::Continue);
+      command.respond_to_router(inner, RouterResponse::Continue).await;
       command.respond_to_caller(Err(RedisError::new(
         RedisErrorKind::Cluster,
         "Invalid cluster redirection error.",
@@ -333,7 +333,7 @@ fn process_cluster_error(
     },
   };
 
-  if let Some(tx) = command.take_router_tx() {
+  if let Some(tx) = command.take_router_tx().await {
     let response = match kind {
       ClusterErrorKind::Ask => RouterResponse::Ask((slot, server, command)),
       ClusterErrorKind::Moved => RouterResponse::Moved((slot, server, command)),
@@ -436,21 +436,23 @@ pub async fn process_response_frame(
       server,
       frame.as_str()
     );
-    process_cluster_error(inner, server, command, frame);
+    process_cluster_error(inner, server, command, frame).await;
     return Ok(());
   }
 
   if command.transaction_id.is_some() {
     if let Some(error) = protocol_utils::frame_to_error(&frame) {
-      if let Some(tx) = command.take_router_tx() {
+      if let Some(tx) = command.take_router_tx().await {
         let _ = tx.send(RouterResponse::TransactionError((error, command)));
       }
       return Ok(());
     } else if command.kind.ends_transaction() {
-      command.respond_to_router(inner, RouterResponse::TransactionResult(frame));
+      command
+        .respond_to_router(inner, RouterResponse::TransactionResult(frame))
+        .await;
       return Ok(());
     } else {
-      command.respond_to_router(inner, RouterResponse::Continue);
+      command.respond_to_router(inner, RouterResponse::Continue).await;
       return Ok(());
     }
   }
@@ -458,10 +460,10 @@ pub async fn process_response_frame(
   _trace!(inner, "Handling clustered response kind: {:?}", command.response);
   match command.take_response() {
     ResponseKind::Skip | ResponseKind::Respond(None) => {
-      command.respond_to_router(inner, RouterResponse::Continue);
+      command.respond_to_router(inner, RouterResponse::Continue).await;
       Ok(())
     },
-    ResponseKind::Respond(Some(tx)) => responders::respond_to_caller(inner, server, command, tx, frame),
+    ResponseKind::Respond(Some(tx)) => responders::respond_to_caller(inner, server, command, tx, frame).await,
     ResponseKind::Buffer {
       received,
       expected,
@@ -469,20 +471,23 @@ pub async fn process_response_frame(
       tx,
       index,
       error_early,
-    } => responders::respond_buffer(
-      inner,
-      server,
-      command,
-      received,
-      expected,
-      error_early,
-      frames,
-      index,
-      tx,
-      frame,
-    ),
-    ResponseKind::KeyScan(scanner) => responders::respond_key_scan(inner, server, command, scanner, frame),
-    ResponseKind::ValueScan(scanner) => responders::respond_value_scan(inner, server, command, scanner, frame),
+    } => {
+      responders::respond_buffer(
+        inner,
+        server,
+        command,
+        received,
+        expected,
+        error_early,
+        frames,
+        index,
+        tx,
+        frame,
+      )
+      .await
+    },
+    ResponseKind::KeyScan(scanner) => responders::respond_key_scan(inner, server, command, scanner, frame).await,
+    ResponseKind::ValueScan(scanner) => responders::respond_value_scan(inner, server, command, scanner, frame).await,
   }
 }
 

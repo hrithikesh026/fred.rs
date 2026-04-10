@@ -121,7 +121,7 @@ async fn write_with_backpressure(
             if command.should_auto_pipeline(inner, force_pipeline) {
               None
             } else {
-              Some(command.create_router_channel())
+              Some(command.create_router_channel().await)
             }
           },
           Err(e) => {
@@ -133,7 +133,7 @@ async fn write_with_backpressure(
           if command.should_auto_pipeline(inner, force_pipeline) {
             None
           } else {
-            Some(command.create_router_channel())
+            Some(command.create_router_channel().await)
           }
         },
       };
@@ -163,7 +163,7 @@ async fn write_with_backpressure(
           router.buffer_commands(commands);
           if let Some(command) = command {
             if command.should_finish_with_error(inner) {
-              command.finish(inner, Err(error));
+              command.finish(inner, Err(error)).await;
             } else {
               router.buffer_command(command);
             }

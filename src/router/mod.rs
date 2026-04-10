@@ -6,8 +6,7 @@ use crate::{
     connection::{self, CommandBuffer, Counters, RedisWriter},
     types::{ClusterRouting, Server},
   },
-  trace,
-  utils as client_utils,
+  trace, utils as client_utils,
 };
 use futures::future::try_join_all;
 use semver::Version;
@@ -67,17 +66,21 @@ pub enum Written {
 
 impl fmt::Display for Written {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", match self {
-      Written::Backpressure(_) => "Backpressure",
-      Written::Sent(_) => "Sent",
-      Written::SentAll => "SentAll",
-      Written::Disconnected(_) => "Disconnected",
-      Written::Ignore => "Ignore",
-      Written::NotFound(_) => "NotFound",
-      Written::Error(_) => "Error",
-      #[cfg(feature = "replicas")]
-      Written::Fallback(_) => "Fallback",
-    })
+    write!(
+      f,
+      "{}",
+      match self {
+        Written::Backpressure(_) => "Backpressure",
+        Written::Sent(_) => "Sent",
+        Written::SentAll => "SentAll",
+        Written::Disconnected(_) => "Disconnected",
+        Written::Ignore => "Ignore",
+        Written::NotFound(_) => "NotFound",
+        Written::Error(_) => "Error",
+        #[cfg(feature = "replicas")]
+        Written::Fallback(_) => "Fallback",
+      }
+    )
   }
 }
 
@@ -108,14 +111,14 @@ impl Backpressure {
       Backpressure::Block => {
         _debug!(inner, "Backpressure (block)");
         trace::backpressure_event(command, None);
-        if !command.has_router_channel() {
+        if !command.has_router_channel().await {
           _trace!(
             inner,
             "Blocking router for backpressure for {}",
             command.kind.to_str_debug()
           );
           command.skip_backpressure = true;
-          Ok(Some(command.create_router_channel()))
+          Ok(Some(command.create_router_channel().await))
         } else {
           Ok(None)
         }
@@ -132,7 +135,7 @@ pub enum Connections {
   },
   Clustered {
     /// The cached cluster routing table used for mapping keys to server IDs.
-    cache:   ClusterRouting,
+    cache: ClusterRouting,
     /// A map of server IDs and connections.
     writers: HashMap<Server, RedisWriter>,
   },
@@ -153,7 +156,7 @@ impl Connections {
 
   pub fn new_clustered() -> Self {
     Connections::Clustered {
-      cache:   ClusterRouting::new(),
+      cache: ClusterRouting::new(),
       writers: HashMap::new(),
     }
   }
@@ -496,12 +499,12 @@ pub struct Router {
   /// The connection map for each deployment type.
   pub connections: Connections,
   /// The inner client state associated with the router.
-  pub inner:       Arc<RedisClientInner>,
+  pub inner: Arc<RedisClientInner>,
   /// Storage for commands that should be deferred or retried later.
-  pub buffer:      VecDeque<RedisCommand>,
+  pub buffer: VecDeque<RedisCommand>,
   /// The replica routing interface.
   #[cfg(feature = "replicas")]
-  pub replicas:    Replicas,
+  pub replicas: Replicas,
 }
 
 impl Router {
@@ -632,7 +635,7 @@ impl Router {
         return Written::NotFound(command);
       },
     };
-    let frame = match utils::prepare_command(&self.inner, &writer.counters, &mut command) {
+    let frame = match utils::prepare_command(&self.inner, &writer.counters, &mut command).await {
       Ok((frame, _)) => frame,
       Err(e) => {
         warn!(
@@ -641,7 +644,7 @@ impl Router {
           command.kind.to_str_debug()
         );
         // do not retry commands that trigger frame encoding errors
-        command.finish(&self.inner, Err(e));
+        command.finish(&self.inner, Err(e)).await;
         return Written::Ignore;
       },
     };
@@ -655,7 +658,7 @@ impl Router {
     }
 
     let no_incr = command.has_no_responses();
-    writer.push_command(&self.inner, command);
+    writer.push_command(&self.inner, command).await;
     if let Err(err) = writer.write_frame(frame, true, no_incr).await {
       Written::Disconnected((Some(writer.server.clone()), None, err))
     } else {
@@ -818,7 +821,7 @@ impl Router {
       }
 
       if let Err(e) = command.decr_check_attempted() {
-        command.finish(&self.inner, Err(e));
+        command.finish(&self.inner, Err(e)).await;
         continue;
       }
       command.skip_backpressure = true;
@@ -864,7 +867,7 @@ impl Router {
         Written::Error((error, command)) => {
           warn!("{}: Error replaying command: {:?}", self.inner.id, error);
           if let Some(command) = command {
-            command.finish(&self.inner, Err(error));
+            command.finish(&self.inner, Err(error)).await;
           }
           self.disconnect_all().await;
           utils::defer_reconnect(&self.inner);

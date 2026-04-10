@@ -80,8 +80,8 @@ pub fn spawn_reader_task(
     // it to the server, just that the connection closed. the shared buffer will be drained when the writer notices
     // that this task finished, but here we need to first filter out any commands that have exceeded their max write
     // attempts.
-    utils::check_blocked_router(&inner, &buffer, &last_error);
-    utils::check_final_write_attempt(&inner, &buffer, &last_error);
+    utils::check_blocked_router(&inner, &buffer, &last_error).await;
+    utils::check_final_write_attempt(&inner, &buffer, &last_error).await;
     if is_replica {
       responses::broadcast_replica_error(&inner, &server, last_error);
     } else {
@@ -130,15 +130,17 @@ pub async fn process_response_frame(
 
   if command.transaction_id.is_some() {
     if let Some(error) = protocol_utils::frame_to_error(&frame) {
-      if let Some(tx) = command.take_router_tx() {
+      if let Some(tx) = command.take_router_tx().await {
         let _ = tx.send(RouterResponse::TransactionError((error, command)));
       }
       return Ok(());
     } else if command.kind.ends_transaction() {
-      command.respond_to_router(inner, RouterResponse::TransactionResult(frame));
+      command
+        .respond_to_router(inner, RouterResponse::TransactionResult(frame))
+        .await;
       return Ok(());
     } else {
-      command.respond_to_router(inner, RouterResponse::Continue);
+      command.respond_to_router(inner, RouterResponse::Continue).await;
       return Ok(());
     }
   }
@@ -147,10 +149,10 @@ pub async fn process_response_frame(
   _trace!(inner, "Handling centralized response kind: {:?}", command.response);
   match command.take_response() {
     ResponseKind::Skip | ResponseKind::Respond(None) => {
-      command.respond_to_router(inner, RouterResponse::Continue);
+      command.respond_to_router(inner, RouterResponse::Continue).await;
       Ok(())
     },
-    ResponseKind::Respond(Some(tx)) => responders::respond_to_caller(inner, server, command, tx, frame),
+    ResponseKind::Respond(Some(tx)) => responders::respond_to_caller(inner, server, command, tx, frame).await,
     ResponseKind::Buffer {
       received,
       expected,
@@ -158,20 +160,23 @@ pub async fn process_response_frame(
       tx,
       index,
       error_early,
-    } => responders::respond_buffer(
-      inner,
-      server,
-      command,
-      received,
-      expected,
-      error_early,
-      frames,
-      index,
-      tx,
-      frame,
-    ),
-    ResponseKind::KeyScan(scanner) => responders::respond_key_scan(inner, server, command, scanner, frame),
-    ResponseKind::ValueScan(scanner) => responders::respond_value_scan(inner, server, command, scanner, frame),
+    } => {
+      responders::respond_buffer(
+        inner,
+        server,
+        command,
+        received,
+        expected,
+        error_early,
+        frames,
+        index,
+        tx,
+        frame,
+      )
+      .await
+    },
+    ResponseKind::KeyScan(scanner) => responders::respond_key_scan(inner, server, command, scanner, frame).await,
+    ResponseKind::ValueScan(scanner) => responders::respond_value_scan(inner, server, command, scanner, frame).await,
   }
 }
 
