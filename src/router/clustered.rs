@@ -265,7 +265,7 @@ pub fn spawn_reader_task(
 
       let frame = match utils::next_frame(&inner, &mut reader, &server, &buffer).await {
         Ok(Some(frame)) => {
-          _trace!(inner, "Received frame from {}: {:?}", server, frame.kind());
+          _trace!(inner, "Received frame from {}", server);
           frame.into_resp3()
         },
         Ok(None) => {
