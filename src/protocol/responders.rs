@@ -450,7 +450,8 @@ pub async fn respond_to_caller(
     update_protocol_version(inner, &command, &frame);
   }
 
-  let _ = tx.send(Ok(frame));
+  let send_result = tx.send(Ok(frame));
+  _trace!(inner, "Send frame result {:?}", send_result);
   command.respond_to_router(inner, RouterResponse::Continue).await;
   Ok(())
 }

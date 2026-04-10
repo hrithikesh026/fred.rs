@@ -246,28 +246,62 @@ pub fn spawn_reader_task(
   let (buffer, counters) = (buffer.clone(), counters.clone());
 
   tokio::spawn(async move {
+    _info!(
+      inner,
+      "Starting clustered reader task for {} (replica: {})",
+      server,
+      is_replica
+    );
     let mut last_error = None;
+    let mut frames_processed: u64 = 0;
 
     loop {
+      _trace!(
+        inner,
+        "Waiting for next frame from {} (frames processed: {})",
+        server,
+        frames_processed
+      );
+
       let frame = match utils::next_frame(&inner, &mut reader, &server, &buffer).await {
-        Ok(Some(frame)) => frame.into_resp3(),
+        Ok(Some(frame)) => {
+          _trace!(inner, "Received frame from {}: {:?}", server, frame.kind());
+          frame.into_resp3()
+        },
         Ok(None) => {
+          _info!(inner, "Connection closed cleanly by server {}", server);
           last_error = None;
           break;
         },
         Err(e) => {
+          _warn!(
+            inner,
+            "Error reading frame from {}: {:?} (frames processed before error: {})",
+            server,
+            e,
+            frames_processed
+          );
           last_error = Some(e);
           break;
         },
       };
 
       if let Some(error) = responses::check_special_errors(&inner, &frame) {
+        _warn!(inner, "Special error detected from {}: {:?}", server, error);
         last_error = Some(error);
         break;
       }
+
       if let Some(frame) = responses::check_pubsub_message(&inner, &server, frame) {
+        _trace!(
+          inner,
+          "Processing response frame from {} (type: {:?})",
+          server,
+          frame.kind()
+        );
+
         if let Err(e) = process_response_frame(&inner, &server, &buffer, &counters, frame).await {
-          _debug!(
+          _error!(
             inner,
             "Error processing clustered response frame from {}: {:?}",
             server,
@@ -276,19 +310,46 @@ pub fn spawn_reader_task(
           last_error = Some(e);
           break;
         }
+
+        frames_processed += 1;
+        _trace!(
+          inner,
+          "Successfully processed frame from {} (total: {})",
+          server,
+          frames_processed
+        );
       }
     }
 
-    // see the centralized variant of this function for more information.
+    _info!(
+      inner,
+      "Reader task for {} shutting down. Total frames processed: {}, Last error: {:?}",
+      server,
+      frames_processed,
+      last_error
+    );
+
+    // Clean up any commands that were waiting on this connection
+    _trace!(
+      inner,
+      "Checking blocked router commands for {} (buffer len: {})",
+      server,
+      buffer.len()
+    );
     utils::check_blocked_router(&inner, &buffer, &last_error).await;
+
+    _trace!(inner, "Checking final write attempts for {}", server);
     utils::check_final_write_attempt(&inner, &buffer, &last_error).await;
+
     if is_replica {
+      _debug!(inner, "Broadcasting replica error for {}", server);
       responses::broadcast_replica_error(&inner, &server, last_error);
     } else {
+      _debug!(inner, "Broadcasting reader error for {}", server);
       responses::broadcast_reader_error(&inner, &server, last_error);
     }
 
-    _debug!(inner, "Ending reader task from {}", server);
+    _info!(inner, "Ended reader task from {} (replica: {})", server, is_replica);
     Ok(())
   })
 }
