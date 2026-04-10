@@ -206,7 +206,7 @@ pub async fn check_final_write_attempt(
   buffer: &SharedBuffer,
   error: &Option<RedisError>,
 ) {
-  let commands: Vec<_> = buffer.drain().collect();
+  let commands: Vec<_> = buffer.drain();
   for command in commands {
     if command.should_finish_with_error(inner) {
       command
