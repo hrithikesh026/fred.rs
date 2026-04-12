@@ -1805,12 +1805,24 @@ impl RedisCommand {
 
   /// Send a message to unblock the router loop, if necessary.
   pub async fn respond_to_router(&self, inner: &Arc<RedisClientInner>, cmd: RouterResponse) {
-    tokio::task::yield_now().await;
-    if let Some(tx) = self.router_tx.lock().await.take() {
-      _trace!(inner, "Found router_tx");
-      let _ = tx.send(cmd).inspect_err(|err| {
-        _debug!(inner, "Failed to unblock router loop. {:?}", err);
-      });
+    // Try immediate lock, skip if contended
+    match self.router_tx.try_lock() {
+      Ok(mut guard) => {
+        _trace!(inner, "Successfully acquired mutex lock");
+        if let Some(tx) = guard.take() {
+          _trace!(inner, "router_tx is present");
+          let _ = tx.send(cmd);
+        }
+      },
+      Err(err) => {
+        _trace!(inner, "Router tx lock contested, yielding...{:?}", err);
+        tokio::task::yield_now().await;
+        // Retry once
+        if let Some(tx) = self.router_tx.lock().await.take() {
+          _trace!(inner, "router_tx is present in Retry");
+          let _ = tx.send(cmd);
+        }
+      },
     }
   }
 
