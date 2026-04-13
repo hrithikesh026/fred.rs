@@ -291,7 +291,7 @@ pub fn spawn_reader_task(
         last_error = Some(error);
         break;
       }
-
+      tokio::task::yield_now().await;
       if let Some(frame) = responses::check_pubsub_message(&inner, &server, frame) {
         _trace!(
           inner,
