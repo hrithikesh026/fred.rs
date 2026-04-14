@@ -454,6 +454,7 @@ pub async fn respond_to_caller(
   _trace!(inner, "Send frame result {:?}", send_result);
   command.respond_to_router(inner, RouterResponse::Continue).await;
   _trace!(inner, "returning from respond_to_caller");
+  tokio::task::yield_now().await;
   Ok(())
 }
 
