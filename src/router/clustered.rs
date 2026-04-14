@@ -310,7 +310,7 @@ pub fn spawn_reader_task(
           last_error = Some(e);
           break;
         }
-
+        _trace!(inner, "returned from process_response_frame");
         frames_processed += 1;
         _trace!(
           inner,
@@ -519,7 +519,7 @@ pub async fn process_response_frame(
   }
 
   _trace!(inner, "Handling clustered response kind: {:?}", command.response);
-  match command.take_response() {
+  let val = match command.take_response() {
     ResponseKind::Skip | ResponseKind::Respond(None) => {
       command.respond_to_router(inner, RouterResponse::Continue).await;
       Ok(())
@@ -549,7 +549,9 @@ pub async fn process_response_frame(
     },
     ResponseKind::KeyScan(scanner) => responders::respond_key_scan(inner, server, command, scanner, frame).await,
     ResponseKind::ValueScan(scanner) => responders::respond_value_scan(inner, server, command, scanner, frame).await,
-  }
+  };
+  _trace!(inner, "returning from process_response_frame");
+  val
 }
 
 /// Try connecting to any node in the provided `RedisConfig` or `old_servers`.

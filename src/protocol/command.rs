@@ -1812,7 +1812,10 @@ impl RedisCommand {
         if let Some(tx) = guard.take() {
           _trace!(inner, "router_tx is present");
           let _ = tx.send(cmd);
+        } else {
+          _trace!(inner, "router_tx is not present");
         }
+        _trace!(inner, "Successfully released mutex lock");
       },
       Err(err) => {
         _trace!(inner, "Router tx lock contested, yielding...{:?}", err);
@@ -1824,6 +1827,7 @@ impl RedisCommand {
         }
       },
     }
+    _trace!(inner, "returning from respond_to_router");
   }
 
   /// Take the router sender from the command.
