@@ -311,7 +311,14 @@ where
 
     trace!("Using timeout: {:?}", timeout);
     match select(ft, sleep_ft).await {
-      Either::Left((lhs, _)) => lhs.map_err(|e| e.into()),
+      Either::Left((lhs, _)) => {
+        trace!("Recieved Frame result through oneshot channel: {:?}", lhs.is_ok());
+        lhs.map_err(|e| {
+          let err = e.into();
+          trace!("Error in frame: {:?}", &err);
+          err
+        })
+      },
       Either::Right((_, _)) => Err(RedisError::new(RedisErrorKind::Timeout, "Request timed out.")),
     }
   } else {
@@ -493,7 +500,9 @@ where
   apply_timeout(rx, timeout_dur)
     .and_then(|r| async { r })
     .map_err(move |error| {
+      _trace!(inner, "before setting atomic bool");
       set_bool_atomic(&timed_out, true);
+      _trace!(inner, "after setting atomic bool");
       error
     })
     .and_then(|frame| async move {
