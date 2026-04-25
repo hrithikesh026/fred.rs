@@ -15,9 +15,7 @@ use bytes_utils::Str;
 use float_cmp::approx_eq;
 use futures::{
   future::{select, Either},
-  pin_mut,
-  Future,
-  TryFutureExt,
+  pin_mut, Future, TryFutureExt,
 };
 use parking_lot::RwLock;
 use rand::{self, distributions::Alphanumeric, Rng};
@@ -26,6 +24,7 @@ use std::{
   collections::HashMap,
   convert::TryInto,
   f64,
+  fmt::Debug,
   sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
@@ -167,7 +166,7 @@ where
 
 #[cfg(feature = "transactions")]
 pub fn random_u64(max: u64) -> u64 {
-  rand::thread_rng().gen_range(0 .. max)
+  rand::thread_rng().gen_range(0..max)
 }
 
 pub fn set_client_state(state: &RwLock<ClientState>, new_state: ClientState) {
@@ -320,6 +319,42 @@ where
         })
       },
       Either::Right((_, _)) => Err(RedisError::new(RedisErrorKind::Timeout, "Request timed out.")),
+    }
+  } else {
+    ft.await.map_err(|e| e.into())
+  }
+}
+
+pub async fn apply_timeout_with_client<T, Fut, E, C>(client: &C, ft: Fut, timeout: Duration) -> Result<T, RedisError>
+where
+  C: ClientLike,
+  E: Into<RedisError>,
+  Fut: Future<Output = Result<T, E>> + Debug,
+{
+  let inner = client.inner();
+  if !timeout.is_zero() {
+    let sleep_ft = sleep(timeout);
+    pin_mut!(sleep_ft);
+    pin_mut!(ft);
+
+    trace!("Using timeout: {:?}", timeout);
+    match select(ft, sleep_ft).await {
+      Either::Left((lhs, _)) => {
+        _trace!(
+          inner,
+          "Recieved Frame result through oneshot channel: {:?}",
+          lhs.is_ok()
+        );
+        lhs.map_err(|e| {
+          let err = e.into();
+          trace!("Error in frame: {:?}", &err);
+          err
+        })
+      },
+      Either::Right((_, fut)) => {
+        _trace!(inner, "timed out before recieving frame through oneshot: {:?}", fut);
+        Err(RedisError::new(RedisErrorKind::Timeout, "Request timed out."))
+      },
     }
   } else {
     ft.await.map_err(|e| e.into())
@@ -497,7 +532,7 @@ where
   check_blocking_policy(inner, &command).await?;
   client.send_command(command)?;
 
-  apply_timeout(rx, timeout_dur)
+  apply_timeout_with_client(client, rx, timeout_dur)
     .and_then(|r| async { r })
     .map_err(move |error| {
       _trace!(inner, "before setting atomic bool");
@@ -605,7 +640,7 @@ pub fn add_jitter(delay: u64, jitter: u32) -> u64 {
   if jitter == 0 {
     delay
   } else {
-    delay.saturating_add(rand::thread_rng().gen_range(0 .. jitter as u64))
+    delay.saturating_add(rand::thread_rng().gen_range(0..jitter as u64))
   }
 }
 
