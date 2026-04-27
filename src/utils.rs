@@ -325,20 +325,22 @@ where
   }
 }
 
-pub async fn apply_timeout_with_client<T, Fut, E, C>(client: &C, ft: Fut, timeout: Duration) -> Result<T, RedisError>
+pub async fn apply_timeout_with_client<T, Fut, E>(
+  inner: &Arc<RedisClientInner>,
+  ft: Fut,
+  timeout: Duration,
+) -> Result<T, RedisError>
 where
-  C: ClientLike,
   E: Into<RedisError>,
   Fut: Future<Output = Result<T, E>> + Debug,
 {
-  let inner = client.inner();
   if !timeout.is_zero() {
     let sleep_ft = sleep(timeout);
     pin_mut!(sleep_ft);
     pin_mut!(ft);
 
     trace!("Using timeout: {:?}", timeout);
-    match select(ft, sleep_ft).await {
+    let res = match select(ft, sleep_ft).await {
       Either::Left((lhs, _)) => {
         _trace!(
           inner,
@@ -355,7 +357,9 @@ where
         _trace!(inner, "timed out before recieving frame through oneshot: {:?}", fut);
         Err(RedisError::new(RedisErrorKind::Timeout, "Request timed out."))
       },
-    }
+    };
+    _trace!(inner, "returning from apply_timeout: {:?}", res.is_ok());
+    res
   } else {
     ft.await.map_err(|e| e.into())
   }
@@ -532,8 +536,11 @@ where
   check_blocking_policy(inner, &command).await?;
   client.send_command(command)?;
 
-  apply_timeout_with_client(client, rx, timeout_dur)
-    .and_then(|r| async { r })
+  apply_timeout_with_client(inner, rx, timeout_dur)
+    .and_then(|r| {
+      _trace!(inner, "returning async {frame}");
+      async { r }
+    })
     .map_err(move |error| {
       _trace!(inner, "before setting atomic bool");
       set_bool_atomic(&timed_out, true);
