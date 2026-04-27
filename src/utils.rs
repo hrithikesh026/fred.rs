@@ -538,7 +538,7 @@ where
 
   apply_timeout_with_client(inner, rx, timeout_dur)
     .and_then(|r| {
-      _trace!(inner, "returning async {frame}");
+      _trace!(inner, "returning async wrapper");
       async { r }
     })
     .map_err(move |error| {
