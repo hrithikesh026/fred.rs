@@ -340,7 +340,7 @@ where
     pin_mut!(ft);
 
     trace!("Using timeout: {:?}", timeout);
-    let res = match select(ft, sleep_ft).await {
+    match select(ft, sleep_ft).await {
       Either::Left((lhs, _)) => {
         _trace!(
           inner,
@@ -357,9 +357,7 @@ where
         _trace!(inner, "timed out before recieving frame through oneshot: {:?}", fut);
         Err(RedisError::new(RedisErrorKind::Timeout, "Request timed out."))
       },
-    };
-    _trace!(inner, "returning from apply_timeout: {:?}", res.is_ok());
-    res
+    }
   } else {
     ft.await.map_err(|e| e.into())
   }
