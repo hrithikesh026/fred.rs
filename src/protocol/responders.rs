@@ -446,8 +446,10 @@ pub fn respond_to_caller(
     update_protocol_version(inner, &command, &frame);
   }
 
-  let _ = tx.send(Ok(frame));
+  let send_res = tx.send(Ok(frame));
+  _trace!(inner, "oneshot send result: {:?}", send_res);
   command.respond_to_router(inner, RouterResponse::Continue);
+  _trace!(inner, "returning from respond to caller");
   Ok(())
 }
 

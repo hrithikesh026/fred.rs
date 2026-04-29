@@ -1812,6 +1812,7 @@ impl RedisCommand {
         _debug!(inner, "Failed to unblock router loop.");
       }
     }
+    _trace!(inner, "Returning from respond_to_router");
   }
 
   /// Take the router sender from the command.
