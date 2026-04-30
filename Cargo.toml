@@ -40,7 +40,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 arc-swap = "1.6"
-tokio = { version = "1.34", features = ["net", "sync", "rt", "rt-multi-thread", "macros"] }
+tokio = { git = "https://github.com/hrithikesh026/tokio-hrithikesh.git", rev = "f6769cd430a8406f6062f6e95c8ee331fdaef1a6", features = ["net", "sync", "rt", "rt-multi-thread", "macros", "time", "io-util"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1.5"
 bytes-utils = "0.1"
@@ -154,3 +154,6 @@ time-series = []
 # Debugging Features
 debug-ids = []
 network-logs = []
+
+[patch.crates-io]
+tokio = { git = "https://github.com/hrithikesh026/tokio-hrithikesh.git", rev = "f6769cd430a8406f6062f6e95c8ee331fdaef1a6" }
